@@ -1,0 +1,151 @@
+Course Project: Writeup (Practical Machine Learning)
+=====
+
+
+# Task 1: Analysis
+
+
+## Inspect input data
+
+Before doing anything, the data set has to be inspected to find characteristics of the given data (used commands sketched).
+
+```{r gplot, fig.widht=4, fig.height=3, message=FALSE}
+library(caret)
+data = read.csv("pml-training.csv")
+head(colnames(data), n=10)
+dim(data)
+summary(data$amplitude_yaw_forearm)
+summary(data$min_roll_forearm)
+```
+
+The following can be observed:
+
+- apparently data set has time series, nevertheless try to do with normal prediction algorithms
+- column `classe` is the value to predict
+- 160 columns in total and therefore 159 possible predictors
+  - a lot predictors!
+  - many cells have no value (missing value)
+  - many have the value `#DIV/0!` (so something went wrong during measuring or already averaged value of something)
+  - columns which contain an index, user name and time can be omitted
+
+
+## Feature selection
+
+According to the inspection of the input data, the provided data set has to be cleaned. The expectation is that the remaining columns provide sufficient information to still train the model with high accuracy and a low error.
+
+Steps for cleaning the data set:
+
+- removing index column (named `X` in R data frame), not useful to do any prediction with the index
+- removing factor variables `user_name` and timestamp columns `cvtd_timestamp`, `raw_timestamp_part_1` and `raw_timestamp_part2`
+- removing columns with series information `num_window` (since trying to se each record/row independently)
+
+```{r}
+colsToRemove = c("X","user_name", "raw_timestamp_part_1", "raw_timestamp_part_2", "num_window", "cvtd_timestamp")
+data <- data[, -which(names(data) %in% colsToRemove)]
+```
+
+- removing columns with
+  - near zero variables since these provide no separation information and
+  - removing cols with `NA` values since predictor can not handle them well
+```{r, fig.widht=4, fig.height=3, message=FALSE}
+data <- data[, -nearZeroVar(data)]
+data <- data[, colSums(is.na(data)) == 0]
+```
+
+All remaining colums are used for fitting the model (includes the column `classe` which should be predicted). Not very astonishingly, these are the sensor data from the activity monitors:
+```{r}
+dim(data)
+colnames(data)
+```
+
+## Prepare data for training
+
+Note that the prediction column `classe` is already used as factor variable:
+```{r, fig.widht=4, fig.height=3, message=FALSE}
+is.factor(data$classe)
+```
+
+The creation of the training and testing set is based on the assumption that the provided data set is of medium size, therefore a splitting of 60% training and 40% testing is appropriate.
+
+```{r, fig.widht=4, fig.height=3, message=FALSE}
+inTrain = createDataPartition(y=data$classe, p=0.60, list=FALSE)
+training = data[inTrain,]
+testing = data[-inTrain,]
+```
+
+
+## Training
+
+For the model the random forest method is chosen. This is because random forests provide a high accuracy along with the already integrated way of avoiding overfitting.
+
+```{r, fig.widht=4, fig.height=3, message=FALSE}
+library(randomForest)
+modelFit <- randomForest(classe ~., data=training, importance=TRUE)
+modelFit
+```
+
+The model shows a very good error rate (OOB estimate of error rate; see later chapter on cross validation). Additionally the confusion matrix cleary shows that predicted and real values most often fit. The class error is very low.
+Therefore the conclusion is that the random forest model is very suitable for the given data.
+
+
+## Testing
+
+Now the `classe` value for all the samples in the testing data set has to be predicted. This helps to get an idea on how the error for real data, i.e. new data, will be.
+
+The resulting confusion matrix of the prediction shows clearly, that the model is not perfect, but very close to.
+
+```{r, fig.widht=4, fig.height=3, message=FALSE}
+predictions <- predict(modelFit, newdata=testing)
+testingConfusionMatrix <- confusionMatrix(predictions, testing$classe)
+testingConfusionMatrix$table
+```
+
+
+## Cross-Validation and out of sample error
+
+This is to address the task to make a statement about the out of sample error rate as well to explain the cross validation used.
+
+According to [ooberr](http://www.stat.berkeley.edu/~breiman/RandomForests/cc_home.htm#ooberr) there is *no need to cross validate* _manually_ when using random forests. This is because during creation of the forest, one thirds of the samples are not used for training a tree.
+The created tree is then used to classify these unused samples.
+
+After the forest creation and classifying for each tree the unused samples, approximatly every sample in the training set has votes from some trees for its classification.
+To get the so called oob error estimate, the averaged error over all samples where the random forest does not predict the right classification, is computed.
+
+This estimated oob error rate is also good estimation for the out of sample (generalization) error. The rate is given in the overview of the model:
+
+```{r}
+modelFit
+```
+
+Therefore the *expected out of sample error* can be assumed to be almost equal to the shown "OOB estimate of error rate". And to get this value, no cross validation is needed when using random forests.
+
+
+# Task 2: Run on test data set
+
+The second task is to predict the `classe` for an unlabeld data set. For this the data set first has to be prepared in the same way as for training.
+Since only columns where removed from the complete data set, the preparation is reduced to selecting the same columns as `data` has:
+
+```{r}
+tdata = read.csv("pml-testing.csv")
+colsToKeep = c(colnames(data), "problem_id")
+tdata <- tdata[, which(names(tdata) %in% colsToKeep)]
+```
+
+Predict each test case with the fitted model `modelFit`, using the prepared data:
+
+```{r}
+tpredictions <- predict(modelFit, newdata=tdata)
+tpredictions
+```
+
+Write out data with helper function
+```{r}
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+pml_write_files(tpredictions)
+```
